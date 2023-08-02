@@ -1,0 +1,67 @@
+From ff726a38bac8d0cc7a1c2934aaedb00666c204f3 Mon Sep 17 00:00:00 2001
+From: Baptiste Lepers <baptiste.lepers@gmail.com>
+Date: Wed, 25 May 2022 06:51:45 +0000
+Subject: [PATCH 1/1] Huge page allocation hook
+
+---
+ include/linux/hugetlb.h  |  4 ++++
+ mm/hugetlb.c             | 10 ++++++++++
+ tools/perf/Makefile.perf |  3 ++-
+ 3 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index 1faebe1cd0ed..dae593460e2c 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -1103,4 +1103,8 @@ bool want_pmd_share(struct vm_area_struct *vma, unsigned long addr);
+ #define flush_hugetlb_tlb_range(vma, addr, end)	flush_tlb_range(vma, addr, end)
+ #endif
+ 
++
++typedef struct page *(*dequeue_hook_t)(struct hstate *h, int nid);
++void set_dequeue_hook(dequeue_hook_t hook);
++
+ #endif /* _LINUX_HUGETLB_H */
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 95dc7b83381f..16f06224a9b9 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -1080,11 +1080,21 @@ static void enqueue_huge_page(struct hstate *h, struct page *page)
+ 	SetHPageFreed(page);
+ }
+ 
++static dequeue_hook_t dequeue_hook = NULL;
++void set_dequeue_hook(dequeue_hook_t hook)
++{
++   dequeue_hook = hook;
++}
++EXPORT_SYMBOL(set_dequeue_hook);
++
+ static struct page *dequeue_huge_page_node_exact(struct hstate *h, int nid)
+ {
+ 	struct page *page;
+ 	bool pin = !!(current->flags & PF_MEMALLOC_PIN);
+ 
++   if(dequeue_hook)
++      return dequeue_hook(h, nid);
++
+ 	lockdep_assert_held(&hugetlb_lock);
+ 	list_for_each_entry(page, &h->hugepage_freelists[nid], lru) {
+ 		if (pin && !is_pinnable_page(page))
+diff --git a/tools/perf/Makefile.perf b/tools/perf/Makefile.perf
+index e04313c4d840..cd3641e15343 100644
+--- a/tools/perf/Makefile.perf
++++ b/tools/perf/Makefile.perf
+@@ -51,7 +51,8 @@ include ../scripts/utilities.mak
+ # Define GTK2 if you want GTK+ GUI support.
+ #
+ # Define NO_DEMANGLE if you do not want C++ symbol demangling.
+-#
++# 
++CFLAGS += -DNO_DEMANGLE
+ # Define NO_LIBELF if you do not want libelf dependency (e.g. cross-builds)
+ #
+ # Define NO_LIBUNWIND if you do not want libunwind dependency for dwarf
+-- 
+2.25.1
+

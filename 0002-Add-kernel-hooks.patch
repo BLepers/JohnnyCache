@@ -1,0 +1,140 @@
+From deb09ca95fe3067a67595a1e4fe56a6f6f7da6d1 Mon Sep 17 00:00:00 2001
+From: Baptiste Lepers <baptiste.lepers@gmail.com>
+Date: Wed, 27 Jul 2022 00:58:32 +0000
+Subject: [PATCH 2/2] Add kernel hooks
+
+---
+ include/linux/hugetlb.h |  8 ++++++++
+ kernel/events/core.c    |  2 ++
+ mm/hugetlb.c            | 27 +++++++++++++++++++++++++++
+ mm/migrate.c            |  1 +
+ mm/vmscan.c             |  1 +
+ 5 files changed, 39 insertions(+)
+
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index dae593460e2c..298f99550203 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -115,6 +115,8 @@ extern struct resv_map *resv_map_alloc(void);
+ void resv_map_release(struct kref *ref);
+ 
+ extern spinlock_t hugetlb_lock;
++spinlock_t *get_hugetlb_lock(void);
++
+ extern int hugetlb_max_hstate __read_mostly;
+ #define for_each_hstate(h) \
+ 	for ((h) = hstates; (h) < &hstates[hugetlb_max_hstate]; (h)++)
+@@ -1107,4 +1109,10 @@ bool want_pmd_share(struct vm_area_struct *vma, unsigned long addr);
+ typedef struct page *(*dequeue_hook_t)(struct hstate *h, int nid);
+ void set_dequeue_hook(dequeue_hook_t hook);
+ 
++typedef struct page *(*enqueue_hook_t)(struct hstate *h, struct page *page);
++void set_enqueue_hook(enqueue_hook_t hook);
++
++int get_max_hstates(void);
++struct hstate *get_hstates(void);
++
+ #endif /* _LINUX_HUGETLB_H */
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 0c000cb01eeb..a2d96352f59d 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -7441,6 +7441,8 @@ void perf_prepare_sample(struct perf_event_header *header,
+ 	 */
+ 	WARN_ON_ONCE(header->size & 7);
+ }
++EXPORT_SYMBOL_GPL(perf_prepare_sample);
++
+ 
+ static __always_inline int
+ __perf_event_output(struct perf_event *event,
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 16f06224a9b9..c7cacf19a769 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -72,6 +72,10 @@ static bool __initdata parsed_default_hugepagesz;
+  * free_huge_pages, and surplus_huge_pages.
+  */
+ DEFINE_SPINLOCK(hugetlb_lock);
++spinlock_t *get_hugetlb_lock(void) {
++   return &hugetlb_lock;
++}
++EXPORT_SYMBOL(get_hugetlb_lock);
+ 
+ /*
+  * Serializes faults on the same logical page.  This is used to
+@@ -1067,10 +1071,22 @@ static bool vma_has_reserves(struct vm_area_struct *vma, long chg)
+ 	return false;
+ }
+ 
++static enqueue_hook_t enqueue_hook = NULL;
++void set_enqueue_hook(enqueue_hook_t hook)
++{
++   enqueue_hook = hook;
++}
++EXPORT_SYMBOL(set_enqueue_hook);
++
+ static void enqueue_huge_page(struct hstate *h, struct page *page)
+ {
+ 	int nid = page_to_nid(page);
+ 
++   if(enqueue_hook) {
++      enqueue_hook(h, page);
++      return;
++   }
++
+ 	lockdep_assert_held(&hugetlb_lock);
+ 	VM_BUG_ON_PAGE(page_count(page), page);
+ 
+@@ -1078,6 +1094,7 @@ static void enqueue_huge_page(struct hstate *h, struct page *page)
+ 	h->free_huge_pages++;
+ 	h->free_huge_pages_node[nid]++;
+ 	SetHPageFreed(page);
++
+ }
+ 
+ static dequeue_hook_t dequeue_hook = NULL;
+@@ -1087,6 +1104,16 @@ void set_dequeue_hook(dequeue_hook_t hook)
+ }
+ EXPORT_SYMBOL(set_dequeue_hook);
+ 
++int get_max_hstates(void) {
++   return hugetlb_max_hstate;
++}
++EXPORT_SYMBOL(get_max_hstates);
++
++struct hstate *get_hstates(void) {
++   return &hstates[0];
++}
++EXPORT_SYMBOL(get_hstates);
++
+ static struct page *dequeue_huge_page_node_exact(struct hstate *h, int nid)
+ {
+ 	struct page *page;
+diff --git a/mm/migrate.c b/mm/migrate.c
+index a6a7743ee98f..eb80305e5fc7 100644
+--- a/mm/migrate.c
++++ b/mm/migrate.c
+@@ -1601,6 +1601,7 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
+ 
+ 	return rc;
+ }
++EXPORT_SYMBOL(migrate_pages);
+ 
+ struct page *alloc_migration_target(struct page *page, unsigned long private)
+ {
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 74296c2d1fed..69ae1cda8dfb 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -2107,6 +2107,7 @@ int isolate_lru_page(struct page *page)
+ 
+ 	return ret;
+ }
++EXPORT_SYMBOL(isolate_lru_page);
+ 
+ /*
+  * A direct reclaimer may isolate SWAP_CLUSTER_MAX pages from the LRU list and
+-- 
+2.25.1
+
