@@ -5,7 +5,7 @@ Paper: [https://www.usenix.org/conference/osdi23/presentation/lepers](https://ww
 ## Usage
 Patch your kernel using the provided patches.
 
-Edit jc.c to configure JC (see comment on top of the file). I recommend to first try to module without the dynamic policy (default setting).
+Edit jc.c to configure JC (see comment on top of the file). I recommend to first try the module without the dynamic policy (default setting).
 
 JC only handles 2MB pages. To force the application to allocate huge pages, we use TCMALLOC ([https://github.com/gperftools/gperftools](https://github.com/gperftools/gperftools)).
 
